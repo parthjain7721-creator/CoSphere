@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+/* Configuration parameters mapping theme tokens to components */
+@theme {
+  --color-brand-bg: #1B262C;
+  --color-brand-deep: #0F4C75;
+  --color-brand-accent: #3282B8;
+  --color-brand-ice: #BBE1FA;
+}
+
+/* Fallback variable parameters supporting strict render processes */
+:root {
+  --brand-bg: #1B262C;
+  --brand-deep: #0F4C75;
+  --brand-accent: #3282B8;
+  --brand-ice: #BBE1FA;
+}
+
+body {
+  background-color: var(--brand-bg);
+  color: #F3F4F6;
+  font-family: 'Inter', sans-serif;
+  margin: 0;
+  overflow: hidden;
+}
+
+/* Custom layout utility configurations for standard components */
+@utility oceanic-spotlight {
+  background: radial-gradient(circle at var(--x, 50%) var(--y, 50%), #0F4C75 0%, #1B262C 70%);
+  transition: background 0.1s ease;
+}
+
+@utility terminal-glow {
+  box-shadow: inset 0 0 10px rgba(15, 76, 117, 0.5);
+  border: 1px solid rgba(50, 130, 184, 0.3);
+}
+
+/* Base custom interactive scrollbar settings styles */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #1B262C;
+}
+::-webkit-scrollbar-thumb {
+  background: #0F4C75;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3282B8;
+}
