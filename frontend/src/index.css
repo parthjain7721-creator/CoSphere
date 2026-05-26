@@ -50,3 +50,52 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #3282B8;
 }
+
+/* --- CoSphere Live Collaborative Cursor Presence Overlays --- */
+.cm-ySelection {
+  background-color: rgba(187, 225, 250, 0.2) !important;
+  transition: background-color 0.15s ease;
+}
+
+.cm-ySelectionCaret {
+  position: relative;
+  border-left: 2px solid var(--y-cursor-color, #64ffda);
+  border-right: none;
+  margin-left: -1px;
+  margin-right: -1px;
+  box-sizing: border-box;
+  display: inline-block;
+  height: 1.4em;
+  vertical-align: text-bottom;
+  animation: none !important; /* Disables standard blink on remote peers */
+}
+
+/* Floating interactive badge showing peer developer labels */
+.cm-ySelectionCaretInfo {
+  position: absolute;
+  top: -1.25em;
+  left: -2px;
+  background-color: var(--y-cursor-color, #64ffda);
+  color: #111a24 !important;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  transform: translateY(4px);
+  z-index: 50;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* Reveal the tag flag smoothly when another developer is active or moving inside the target block line */
+.cm-ySelectionCaret:hover .cm-ySelectionCaretInfo,
+.cm-ySelection:hover + .cm-ySelectionCaret .cm-ySelectionCaretInfo,
+.cm-ySelectionCaret .cm-ySelectionCaretInfo {
+  opacity: 1;
+  transform: translateY(0);
+}

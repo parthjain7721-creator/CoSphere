@@ -43,7 +43,9 @@ export default function Workspace() {
 
   // Scroll down to the latest message whenever chat data list shifts
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isChatOpen) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [chatMessages, isChatOpen]);
 
   useEffect(() => {
@@ -58,12 +60,13 @@ export default function Workspace() {
         cmViewRef.current = null;
       }
 
+      const localAwareness = provider.awareness;
       const ytext = ydoc.getText('codemirror-shared');
       const state = EditorState.create({
         doc: ytext.toString(),
         extensions: [
           javascript(),
-          yCollab(ytext, provider.awareness),
+          yCollab(ytext, localAwareness),
           EditorView.theme({
             "&": { backgroundColor: "#1B262C", color: "#BBE1FA", height: "100%" },
             ".cm-content": { caretColor: "#BBE1FA", fontFamily: "JetBrains Mono, monospace" },
@@ -72,7 +75,7 @@ export default function Workspace() {
             ".cm-scroller": { overflow: "auto" }
           })
         ]
-      });
+    });
 
       cmViewRef.current = new EditorView({ state, parent: editorRef.current });
     }
@@ -86,11 +89,10 @@ export default function Workspace() {
         editorProps: {
           attributes: { class: 'focus:outline-none text-gray-200 min-h-[400px] p-4' }
         }
-      });
+    });
       setTiptapEditor(instance);
     }
 
-    // 💬 Hook custom message packet logic directly into your open socket stream
     const handleIncomingSocketData = (event) => {
       try {
         const uint8Msg = new Uint8Array(event.data);
@@ -129,7 +131,6 @@ export default function Workspace() {
     };
   }, [tiptapEditor]);
 
-  // 💬 Dispatch custom Chat Message across the shared WebSocket channel
   const sendChatMessage = (e) => {
     e.preventDefault();
     if (!chatInput.trim() || !providerRef.current?.ws) return;
@@ -199,113 +200,115 @@ export default function Workspace() {
   };
 
   return (
-    <div onMouseMove={handleMouseMove} className="oceanic-spotlight w-screen h-screen flex flex-col selection:bg-brand-accent selection:text-white">
-      {/* Dynamic Header Panel */}
-      <header className="h-14 border-b border-brand-deep bg-brand-bg/80 backdrop-blur-md flex items-center justify-between px-6 z-10">
+    <div onMouseMove={handleMouseMove} className="oceanic-spotlight w-screen h-screen flex flex-col bg-[#0F172A] text-slate-100 overflow-hidden selection:bg-brand-accent selection:text-white">
+      {/* Header Panel */}
+      <header className="h-14 border-b border-[#1E293B] bg-[#0F172A]/80 backdrop-blur-md flex items-center justify-between px-6 z-10 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-linear-to-br from-brand-accent to-brand-ice flex items-center justify-center font-bold text-brand-bg text-lg">C</div>
-          <span className="font-bold tracking-widest text-brand-ice text-lg">CoSphere</span>
-          <div className="flex items-center gap-2 ml-4 px-2 py-0.5 rounded bg-brand-deep text-xs text-gray-300 border border-brand-accent/20">
+          <div className="w-8 h-8 rounded-lg bg-linear-to-br from-cyan-400 to-blue-500 flex items-center justify-center font-bold text-[#0F172A] text-lg">C</div>
+          <span className="font-bold tracking-widest text-cyan-400 text-lg">CoSphere</span>
+          <div className="flex items-center gap-2 ml-4 px-2 py-0.5 rounded bg-[#1E293B] text-xs text-gray-300 border border-cyan-500/20">
             <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`}></span>
             Room: {roomId}
           </div>
-          
-          <select value={language} onChange={(e) => setLanguage(e.target.value)} className="bg-brand-deep text-brand-ice text-xs font-semibold px-3 py-1.5 rounded-lg border border-brand-accent/20 focus:outline-none focus:border-brand-accent cursor-pointer">
+            
+          <select value={language} onChange={(e) => setLanguage(e.target.value)} className="bg-[#1E293B] text-cyan-100 text-xs font-semibold px-3 py-1.5 rounded-lg border border-cyan-500/20 focus:outline-none focus:border-cyan-400 cursor-pointer">
             <option value="javascript">JavaScript (Node)</option>
             <option value="python">Python 3</option>
           </select>
         </div>
 
-        {/* Dual Mode Selectors */}
-        <div className="bg-brand-bg border border-brand-deep p-1 rounded-xl flex items-center gap-1">
-          <button onClick={() => setMode('code')} className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ${mode === 'code' ? 'bg-brand-accent text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}>
+        {/* Workspace Dual-Mode Controls */}
+        <div className="bg-[#0F172A] border border-[#1E293B] p-1 rounded-xl flex items-center gap-1">
+          <button onClick={() => setMode('code')} className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ${mode === 'code' ? 'bg-cyan-500 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}>
             <Code size={16} /> Code Canvas
           </button>
-          <button onClick={() => setMode('notes')} className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ${mode === 'notes' ? 'bg-brand-accent text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}>
+          <button onClick={() => setMode('notes')} className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ${mode === 'notes' ? 'bg-cyan-500 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}>
             <BookOpen size={16} /> Shared Notes
           </button>
         </div>
 
         <div className="flex items-center gap-2">
-          <button onClick={() => setIsChatOpen(!isChatOpen)} className={`relative flex items-center gap-2 bg-brand-deep border ${isChatOpen ? 'border-brand-accent bg-brand-accent/10' : 'border-brand-accent/30'} text-brand-ice text-xs px-4 py-2 rounded-lg transition-transform active:scale-95`}>
+          <button onClick={() => setIsChatOpen(!isChatOpen)} className={`flex items-center gap-2 bg-[#1E293B] border ${isChatOpen ? 'border-cyan-400 bg-cyan-500/10' : 'border-cyan-500/30'} text-cyan-100 text-xs px-4 py-2 rounded-lg transition-transform active:scale-95`}>
             <MessageSquare size={14} /> Team Chat
           </button>
-          <button onClick={() => navigator.clipboard.writeText(window.location.href)} className="flex items-center gap-2 bg-brand-deep hover:bg-brand-accent border border-brand-accent/30 text-brand-ice text-xs px-4 py-2 rounded-lg transition-transform active:scale-95">
+          <button onClick={() => navigator.clipboard.writeText(window.location.href)} className="flex items-center gap-2 bg-[#1E293B] hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-100 text-xs px-4 py-2 rounded-lg transition-transform active:scale-95">
             <Share2 size={14} /> Invite Link
           </button>
         </div>
       </header>
 
-      {/* Core Operational Grid */}
-      <div className="flex-1 flex overflow-hidden relative">
-        <aside className="w-60 border-r border-brand-deep bg-brand-bg/40 backdrop-blur-sm p-4 flex flex-col justify-between">
+      {/* Main Container Layout */}
+      <div className="flex-1 flex overflow-hidden w-full relative">
+        {/* Left Control Panel */}
+        <aside className="w-60 border-r border-[#1E293B] bg-[#0F172A]/40 backdrop-blur-sm p-4 flex flex-col justify-between shrink-0">
           <div>
-            <div className="flex items-center gap-2 text-brand-ice font-semibold uppercase tracking-wider text-xs mb-4">
+            <div className="flex items-center gap-2 text-cyan-400 font-semibold uppercase tracking-wider text-xs mb-4">
               <Users size={14} /> Team Members ({users.length})
             </div>
             <div className="space-y-2">
               {users.map((user, idx) => (
-                <div key={idx} className="flex items-center gap-3 p-2 rounded-xl bg-brand-deep/30 border border-brand-deep/50">
+                <div key={idx} className="flex items-center gap-3 p-2 rounded-xl bg-[#1E293B]/30 border border-[#1E293B]/50">
                   <div className="w-3 h-3 rounded-full shadow-md" style={{ backgroundColor: user.color }} />
                   <span className="text-sm font-medium text-gray-200">{user.name}</span>
                 </div>
               ))}
             </div>
           </div>
-          <button onClick={triggerAiReview} disabled={isAiLoading} className="w-full py-2.5 rounded-xl bg-linear-to-r from-brand-deep to-brand-accent border border-brand-accent/40 text-brand-ice font-medium text-sm flex items-center justify-center gap-2 hover:brightness-110 transition-all">
+          <button onClick={triggerAiReview} disabled={isAiLoading} className="w-full py-2.5 rounded-xl bg-gradient-to-r from-[#1E293B] to-cyan-600 border border-cyan-500/40 text-cyan-100 font-medium text-sm flex items-center justify-center gap-2 hover:brightness-110 transition-all">
             <Cpu size={16} /> {isAiLoading ? 'Analyzing...' : 'Ask Gemini AI'}
           </button>
         </aside>
 
-        {/* Text Area Canvas Sections */}
-        <main className="flex-1 flex flex-col bg-brand-bg/20">
-          <div className="flex-1 relative overflow-auto p-4">
+        {/* Central Workspace Sandbox Panels */}
+        <main className="flex-1 flex flex-col bg-[#0F172A]/20 min-w-0 overflow-hidden">
+          <div className="flex-1 relative p-4 overflow-hidden">
             {mode === 'code' ? (
-              <div ref={editorRef} className="w-full h-full text-base rounded-2xl border border-brand-deep/60 p-2 bg-brand-bg" />
+              <div ref={editorRef} className="w-full h-full text-base rounded-2xl border border-[#1E293B]/60 p-2 bg-[#1B262C] overflow-hidden" />
             ) : (
-              <div className="w-full h-full rounded-2xl border border-brand-deep/60 bg-brand-bg overflow-y-auto">
+              <div className="w-full h-full rounded-2xl border border-[#1E293B]/60 bg-[#1B262C] overflow-y-auto">
                 {tiptapEditor && <EditorContent editor={tiptapEditor} />}
               </div>
             )}
           </div>
 
-          <section className="h-65 border-t border-brand-deep bg-brand-bg/90 flex flex-col">
-            <div className="h-10 border-b border-brand-deep bg-brand-bg flex items-center justify-between px-4">
-              <div className="flex items-center gap-2 text-xs text-brand-ice font-mono"><Terminal size={14} /> stdout // sandboxed-runtime-output</div>
+          {/* Bottom Terminal Screen Output Panel */}
+          <section className="h-64 border-t border-[#1E293B] bg-[#0F172A]/90 flex flex-col shrink-0">
+            <div className="h-10 border-b border-[#1E293B] bg-[#0F172A] flex items-center justify-between px-4">
+              <div className="flex items-center gap-2 text-xs text-cyan-400 font-mono"><Terminal size={14} /> stdout // sandboxed-runtime-output</div>
               <button onClick={runCode} disabled={isRunning} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs px-4 py-1 rounded-md shadow-md transition-all"><Play size={12} /> {isRunning ? 'Running...' : 'Run Engine'}</button>
             </div>
-            <pre className="flex-1 p-4 font-mono text-sm text-emerald-400 bg-black/40 overflow-y-auto whitespace-pre-wrap terminal-glow">{terminalOutput || '> Code output stream awaits initialization.'}</pre>
+            <pre className="flex-1 p-4 font-mono text-sm text-emerald-400 bg-black/40 overflow-y-auto whitespace-pre-wrap">{terminalOutput || '> Code output stream awaits initialization.'}</pre>
           </section>
         </main>
 
-        {/* AI Sidebar Diagnostics Overlay */}
+        {/* AI Drawer Diagnostics Overlay */}
         {aiAnalysis && (
-          <aside className="w-[320px] border-l border-brand-deep bg-brand-bg/70 backdrop-blur-xl p-4 overflow-y-auto">
-            <h3 className="text-sm font-bold text-brand-ice uppercase tracking-wider mb-3">Gemini Diagnostics</h3>
+          <aside className="w-80 border-l border-[#1E293B] bg-[#0F172A]/70 backdrop-blur-xl p-4 overflow-y-auto shrink-0">
+            <h3 className="text-sm font-bold text-cyan-400 uppercase tracking-wider mb-3">Gemini Diagnostics</h3>
             <div className="prose prose-invert text-sm text-gray-300 leading-relaxed"><ReactMarkdown>{aiAnalysis}</ReactMarkdown></div>
           </aside>
         )}
 
-        {/* 💬 Collapsible Sliding Live Team Chat Drawer Panel */}
-        <div className={`absolute top-0 right-0 h-full w-[350px] bg-brand-bg/95 border-l border-brand-deep backdrop-blur-xl shadow-2xl flex flex-col z-20 transition-all duration-300 ease-in-out transform ${isChatOpen ? 'translate-x-0' : 'translate-x-full'}`}>
-          <div className="p-4 border-b border-brand-deep flex items-center justify-between bg-brand-deep/30">
-            <div className="flex items-center gap-2 text-brand-ice font-semibold text-sm">
-              <MessageSquare size={16} className="text-brand-accent" /> Live Communication Channel
+        {/* 💬 FIXED: Inline Dynamic Flex-Docked Side Communication Panel */}
+        <div className={`h-full border-l border-[#1E293B] bg-[#0F172A]/95 backdrop-blur-xl shadow-2xl flex flex-col shrink-0 transition-all duration-300 ease-in-out ${isChatOpen ? 'w-[350px] opacity-100 visibility-visible' : 'w-0 opacity-0 overflow-hidden pointer-events-none'}`}>
+          <div className="p-4 border-b border-[#1E293B] flex items-center justify-between bg-[#1E293B]/30 whitespace-nowrap">
+            <div className="flex items-center gap-2 text-cyan-100 font-semibold text-sm">
+              <MessageSquare size={16} className="text-cyan-400" /> Live Communication Channel
             </div>
-            <button onClick={() => setIsChatOpen(false)} className="text-gray-400 hover:text-brand-ice transition-colors p-1 rounded-lg hover:bg-brand-deep"><X size={16} /></button>
+            <button onClick={() => setIsChatOpen(false)} className="text-gray-400 hover:text-cyan-100 transition-colors p-1 rounded-lg hover:bg-[#1E293B]"><X size={16} /></button>
           </div>
 
-          {/* Chat Messages Log Scroll Layout */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin">
+          {/* Chat Messaging logs */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
             {chatMessages.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center p-6 text-gray-500 font-mono text-xs">
+              <div className="h-full flex flex-col items-center justify-center text-center p-6 text-gray-500 font-mono text-xs whitespace-normal">
                 &gt; Communication stream offline. No active sequences dispatched yet.
               </div>
             ) : (
               chatMessages.map((msg) => (
-                <div key={msg.id} className="flex flex-col bg-brand-deep/20 border border-brand-deep/40 p-2.5 rounded-xl max-w-[90%]">
+                <div key={msg.id} className="flex flex-col bg-[#1E293B]/20 border border-[#1E293B]/40 p-2.5 rounded-xl max-w-[90%]">
                   <div className="flex items-center justify-between gap-4 mb-1">
-                    <span className="text-xs font-bold text-brand-accent truncate">{msg.sender}</span>
+                    <span className="text-xs font-bold text-cyan-400 truncate">{msg.sender}</span>
                     <span className="text-[10px] text-gray-500 font-mono">{msg.timestamp}</span>
                   </div>
                   <p className="text-sm text-gray-200 break-words font-sans">{msg.text}</p>
@@ -315,9 +318,8 @@ export default function Workspace() {
             <div ref={chatEndRef} />
           </div>
 
-          {/* Message Input Submission Form block */}
-          <form onSubmit={sendChatMessage} className="p-3 border-t border-brand-deep bg-brand-bg/60">
-            <div className="flex items-center gap-2 rounded-xl bg-brand-deep/40 border border-brand-deep px-3 py-1.5 focus-within:border-brand-accent/60 transition-colors">
+          <form onSubmit={sendChatMessage} className="p-3 border-t border-[#1E293B] bg-[#0F172A]/60 whitespace-nowrap">
+            <div className="flex items-center gap-2 rounded-xl bg-[#1E293B]/40 border border-[#1E293B] px-3 py-1.5 focus-within:border-cyan-500/60 transition-colors">
               <input 
                 type="text" 
                 value={chatInput} 
@@ -325,7 +327,7 @@ export default function Workspace() {
                 placeholder="Type messages..." 
                 className="flex-1 bg-transparent border-none text-sm text-gray-200 placeholder-gray-500 focus:outline-none"
               />
-              <button type="submit" disabled={!chatInput.trim()} className="text-brand-ice hover:text-brand-accent disabled:text-gray-600 disabled:hover:text-gray-600 transition-colors p-1"><Send size={14} /></button>
+              <button type="submit" disabled={!chatInput.trim()} className="text-cyan-100 hover:text-cyan-400 disabled:text-gray-600 transition-colors p-1"><Send size={14} /></button>
             </div>
           </form>
         </div>
