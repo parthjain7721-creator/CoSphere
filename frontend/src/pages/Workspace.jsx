@@ -6,9 +6,6 @@ import { EditorView } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { javascript } from '@codemirror/lang-javascript';
 import { yCollab } from 'y-codemirror.next';
-import { Editor, EditorContent } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import Collaboration from '@tiptap/extension-collaboration';
 import ReactMarkdown from 'react-markdown';
 
 export default function Workspace() {
@@ -23,15 +20,19 @@ export default function Workspace() {
   const [aiAnalysis, setAiAnalysis] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
 
+  // Markdown Real-time Streaming State Parser Hook
+  const [markdownText, setMarkdownText] = useState('');
+
   // 💬 Chat Panel State Layout Hooks
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [chatMessages, setChatMessages] = useState([]);
   
   const editorRef = useRef(null);
+  const notesEditorRef = useRef(null);
   const cmViewRef = useRef(null);
+  const cmNotesViewRef = useRef(null);
   const chatEndRef = useRef(null);
-  const [tiptapEditor, setTiptapEditor] = useState(null);
 
   const handleMouseMove = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -54,13 +55,15 @@ export default function Workspace() {
 
     if (!ydoc || !provider) return;
 
+    const localAwareness = provider.awareness;
+
+    // 📝 PANEL A: Code Canvas Real-time Mount Vector
     if (mode === 'code' && editorRef.current) {
       if (cmViewRef.current) {
         cmViewRef.current.destroy();
         cmViewRef.current = null;
       }
 
-      const localAwareness = provider.awareness;
       const ytext = ydoc.getText('codemirror-shared');
       const state = EditorState.create({
         doc: ytext.toString(),
@@ -80,17 +83,39 @@ export default function Workspace() {
       cmViewRef.current = new EditorView({ state, parent: editorRef.current });
     }
 
-    if (!tiptapEditor) {
-      const instance = new Editor({
+    // 📑 PANEL B: Shared Notes Split Markdown Canvas Mount Vector
+    if (mode === 'notes' && notesEditorRef.current) {
+      if (cmNotesViewRef.current) {
+        cmNotesViewRef.current.destroy();
+        cmNotesViewRef.current = null;
+      }
+
+      const yNotesText = ydoc.getText('codemirror-notes-shared');
+      
+      // Seed initial local display render state parsing mapping cleanly
+      setMarkdownText(yNotesText.toString());
+
+      const notesState = EditorState.create({
+        doc: yNotesText.toString(),
         extensions: [
-          StarterKit.configure({ history: false }),
-          Collaboration.configure({ document: ydoc, field: 'tiptap-shared' })
-        ],
-        editorProps: {
-          attributes: { class: 'focus:outline-none text-gray-200 min-h-[400px] p-4' }
-        }
+          yCollab(yNotesText, localAwareness),
+          EditorView.updateListener.of((update) => {
+            if (update.docChanged) {
+              setMarkdownText(update.state.doc.toString());
+            }
+          }),
+          EditorView.theme({
+            "&": { backgroundColor: "#111827", color: "#E5E7EB", height: "100%" },
+            ".cm-content": { caretColor: "#67e8f9", fontFamily: "JetBrains Mono, monospace", padding: "12px" },
+            ".cm-cursor": { borderLeftColor: "#67e8f9" },
+            "&.cm-focused .cm-cursor": { borderLeftColor: "#67e8f9" },
+            ".cm-scroller": { overflow: "auto" }
+          }),
+          EditorView.lineWrapping
+        ]
     });
-      setTiptapEditor(instance);
+
+      cmNotesViewRef.current = new EditorView({ state: notesState, parent: notesEditorRef.current });
     }
 
     const handleIncomingSocketData = (event) => {
@@ -117,19 +142,15 @@ export default function Workspace() {
         cmViewRef.current.destroy();
         cmViewRef.current = null;
       }
+      if (cmNotesViewRef.current && mode !== 'notes') {
+        cmNotesViewRef.current.destroy();
+        cmNotesViewRef.current = null;
+      }
       if (provider.ws) {
         provider.ws.removeEventListener('message', handleIncomingSocketData);
       }
     };
-  }, [ydocRef, providerRef, tiptapEditor, mode]);
-
-  useEffect(() => {
-    return () => {
-      if (tiptapEditor) {
-        tiptapEditor.destroy();
-      }
-    };
-  }, [tiptapEditor]);
+  }, [ydocRef, providerRef, mode]);
 
   const sendChatMessage = (e) => {
     e.preventDefault();
@@ -183,11 +204,14 @@ export default function Workspace() {
     setIsAiLoading(true);
     setAiAnalysis('Analyzing context blocks...');
     try {
-      const sourceCode = cmViewRef.current?.state.doc.toString() || '';
+      const sourceCode = (mode === 'code') 
+        ? (cmViewRef.current?.state.doc.toString() || '')
+        : (cmNotesViewRef.current?.state.doc.toString() || '');
+        
       const response = await fetch('http://localhost:5000/api/ai/explain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: sourceCode, language: language })
+        body: JSON.stringify({ code: sourceCode, language: (mode === 'code' ? language : 'markdown') })
       });
       const data = await response.json();
       setAiAnalysis(data.candidates?.[0]?.content?.parts?.[0]?.text || 'No review returned.');
@@ -204,20 +228,22 @@ export default function Workspace() {
       {/* Header Panel */}
       <header className="h-14 border-b border-[#1E293B] bg-[#0F172A]/80 backdrop-blur-md flex items-center justify-between px-6 z-10 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-linear-to-br from-cyan-400 to-blue-500 flex items-center justify-center font-bold text-[#0F172A] text-lg">C</div>
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-400 to-blue-500 flex items-center justify-center font-bold text-[#0F172A] text-lg">C</div>
           <span className="font-bold tracking-widest text-cyan-400 text-lg">CoSphere</span>
           <div className="flex items-center gap-2 ml-4 px-2 py-0.5 rounded bg-[#1E293B] text-xs text-gray-300 border border-cyan-500/20">
             <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`}></span>
             Room: {roomId}
           </div>
-            
-          <select value={language} onChange={(e) => setLanguage(e.target.value)} className="bg-[#1E293B] text-cyan-100 text-xs font-semibold px-3 py-1.5 rounded-lg border border-cyan-500/20 focus:outline-none focus:border-cyan-400 cursor-pointer">
-            <option value="javascript">JavaScript (Node)</option>
-            <option value="python">Python 3</option>
-          </select>
+          
+          {mode === 'code' && (
+            <select value={language} onChange={(e) => setLanguage(e.target.value)} className="bg-[#1E293B] text-cyan-100 text-xs font-semibold px-3 py-1.5 rounded-lg border border-cyan-500/20 focus:outline-none focus:border-cyan-400 cursor-pointer">
+              <option value="javascript">JavaScript (Node)</option>
+              <option value="python">Python 3</option>
+            </select>
+          )}
         </div>
 
-        {/* Workspace Dual-Mode Controls */}
+        {/* Workspace Mode Control Elements */}
         <div className="bg-[#0F172A] border border-[#1E293B] p-1 rounded-xl flex items-center gap-1">
           <button onClick={() => setMode('code')} className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ${mode === 'code' ? 'bg-cyan-500 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}>
             <Code size={16} /> Code Canvas
@@ -237,9 +263,9 @@ export default function Workspace() {
         </div>
       </header>
 
-      {/* Main Container Layout */}
+      {/* Main Structural Frame Operational Split Grid Layout */}
       <div className="flex-1 flex overflow-hidden w-full relative">
-        {/* Left Control Panel */}
+        {/* Left Aside Team Presence Node */}
         <aside className="w-60 border-r border-[#1E293B] bg-[#0F172A]/40 backdrop-blur-sm p-4 flex flex-col justify-between shrink-0">
           <div>
             <div className="flex items-center gap-2 text-cyan-400 font-semibold uppercase tracking-wider text-xs mb-4">
@@ -259,26 +285,48 @@ export default function Workspace() {
           </button>
         </aside>
 
-        {/* Central Workspace Sandbox Panels */}
+        {/* Central Component Panel Gateway Workspace */}
         <main className="flex-1 flex flex-col bg-[#0F172A]/20 min-w-0 overflow-hidden">
           <div className="flex-1 relative p-4 overflow-hidden">
             {mode === 'code' ? (
-              <div ref={editorRef} className="w-full h-full text-base rounded-2xl border border-[#1E293B]/60 p-2 bg-[#1B262C] overflow-hidden" />
+              /* CODE CANVAS WORKSPACE VIEW */
+              <div className="w-full h-full flex flex-col">
+                <div ref={editorRef} className="flex-1 text-base rounded-2xl border border-[#1E293B]/60 p-2 bg-[#1B262C] overflow-hidden" />
+                
+                {/* Embedded Terminal Stream Console Drawer */}
+                <section className="h-56 mt-4 border border-[#1E293B] rounded-2xl bg-[#0F172A]/90 flex flex-col overflow-hidden shrink-0">
+                  <div className="h-10 border-b border-[#1E293B] bg-[#0F172A] flex items-center justify-between px-4">
+                    <div className="flex items-center gap-2 text-xs text-cyan-400 font-mono"><Terminal size={14} /> stdout // sandboxed-runtime-output</div>
+                    <button onClick={runCode} disabled={isRunning} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs px-4 py-1 rounded-md shadow-md transition-all"><Play size={12} /> {isRunning ? 'Running...' : 'Run Engine'}</button>
+                  </div>
+                  <pre className="flex-1 p-4 font-mono text-sm text-emerald-400 bg-black/40 overflow-y-auto whitespace-pre-wrap">{terminalOutput || '> Code output stream awaits initialization.'}</pre>
+                </section>
+              </div>
             ) : (
-              <div className="w-full h-full rounded-2xl border border-[#1E293B]/60 bg-[#1B262C] overflow-y-auto">
-                {tiptapEditor && <EditorContent editor={tiptapEditor} />}
+              /* DUAL PANE COLLABORATIVE MARKDOWN PANEL INTERFACE LOGIC BLOCK */
+              <div className="w-full h-full flex gap-4 overflow-hidden">
+                {/* Left Split Pane: Raw Shared Input Editor */}
+                <div className="flex-1 flex flex-col min-w-0 h-full">
+                  <div className="text-xs text-slate-400 font-mono mb-1 uppercase tracking-wider">&gt;_ markdown_source_editor</div>
+                  <div ref={notesEditorRef} className="flex-1 rounded-2xl border border-[#1E293B]/80 bg-[#111827] overflow-hidden p-1 shadow-inner" />
+                </div>
+
+                {/* Right Split Pane: Computed Rendered Document Window View */}
+                <div className="flex-1 flex flex-col min-w-0 h-full">
+                  <div className="text-xs text-cyan-400 font-mono mb-1 uppercase tracking-wider">&gt;_ real_time_compiled_view</div>
+                  <div className="flex-1 rounded-2xl border border-[#1E293B]/60 bg-[#1E293B]/20 p-6 overflow-y-auto prose prose-invert prose-cyan max-w-none shadow-lg leading-relaxed">
+                    {markdownText.trim() ? (
+                      <ReactMarkdown>{markdownText}</ReactMarkdown>
+                    ) : (
+                      <div className="h-full flex items-center justify-center text-center font-mono text-xs text-slate-500 p-4">
+                        Waiting for markdown structure inputs. Start typing headers (#) to format your document blueprint...
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </div>
-
-          {/* Bottom Terminal Screen Output Panel */}
-          <section className="h-64 border-t border-[#1E293B] bg-[#0F172A]/90 flex flex-col shrink-0">
-            <div className="h-10 border-b border-[#1E293B] bg-[#0F172A] flex items-center justify-between px-4">
-              <div className="flex items-center gap-2 text-xs text-cyan-400 font-mono"><Terminal size={14} /> stdout // sandboxed-runtime-output</div>
-              <button onClick={runCode} disabled={isRunning} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs px-4 py-1 rounded-md shadow-md transition-all"><Play size={12} /> {isRunning ? 'Running...' : 'Run Engine'}</button>
-            </div>
-            <pre className="flex-1 p-4 font-mono text-sm text-emerald-400 bg-black/40 overflow-y-auto whitespace-pre-wrap">{terminalOutput || '> Code output stream awaits initialization.'}</pre>
-          </section>
         </main>
 
         {/* AI Drawer Diagnostics Overlay */}
@@ -289,7 +337,7 @@ export default function Workspace() {
           </aside>
         )}
 
-        {/* 💬 FIXED: Inline Dynamic Flex-Docked Side Communication Panel */}
+        {/* 💬 Live Side Communication Panel */}
         <div className={`h-full border-l border-[#1E293B] bg-[#0F172A]/95 backdrop-blur-xl shadow-2xl flex flex-col shrink-0 transition-all duration-300 ease-in-out ${isChatOpen ? 'w-[350px] opacity-100 visibility-visible' : 'w-0 opacity-0 overflow-hidden pointer-events-none'}`}>
           <div className="p-4 border-b border-[#1E293B] flex items-center justify-between bg-[#1E293B]/30 whitespace-nowrap">
             <div className="flex items-center gap-2 text-cyan-100 font-semibold text-sm">
@@ -298,7 +346,6 @@ export default function Workspace() {
             <button onClick={() => setIsChatOpen(false)} className="text-gray-400 hover:text-cyan-100 transition-colors p-1 rounded-lg hover:bg-[#1E293B]"><X size={16} /></button>
           </div>
 
-          {/* Chat Messaging logs */}
           <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
             {chatMessages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center p-6 text-gray-500 font-mono text-xs whitespace-normal">
@@ -306,7 +353,7 @@ export default function Workspace() {
               </div>
             ) : (
               chatMessages.map((msg) => (
-                <div key={msg.id} className="flex flex-col bg-[#1E293B]/20 border border-[#1E293B]/40 p-2.5 rounded-xl max-w-[90%]">
+                <div key={msg.id} className="flex flex-col bg-[#1E293B]/20 border border-brand-deep/40 p-2.5 rounded-xl max-w-[90%]">
                   <div className="flex items-center justify-between gap-4 mb-1">
                     <span className="text-xs font-bold text-cyan-400 truncate">{msg.sender}</span>
                     <span className="text-[10px] text-gray-500 font-mono">{msg.timestamp}</span>
@@ -319,7 +366,7 @@ export default function Workspace() {
           </div>
 
           <form onSubmit={sendChatMessage} className="p-3 border-t border-[#1E293B] bg-[#0F172A]/60 whitespace-nowrap">
-            <div className="flex items-center gap-2 rounded-xl bg-[#1E293B]/40 border border-[#1E293B] px-3 py-1.5 focus-within:border-cyan-500/60 transition-colors">
+            <div className="flex items-center gap-2 rounded-xl bg-[#1E293B]/40 border border-brand-deep px-3 py-1.5 focus-within:border-cyan-500/60 transition-colors">
               <input 
                 type="text" 
                 value={chatInput} 

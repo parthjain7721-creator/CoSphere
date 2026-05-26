@@ -18,8 +18,9 @@ export function useRoom(roomId) {
     const provider = new WebsocketProvider(BACKEND_WS, roomId, doc);
     providerRef.current = provider;
 
-    const localName = anonymousNames[Math.floor(Math.random() * anonymousNames.length)];
-    const localColor = colors[Math.floor(Math.random() * colors.length)];
+    // FIXED: Hydrate custom handles from local storage memory blocks or fallback dynamically
+    const localName = sessionStorage.getItem('cosphere_user_name') || anonymousNames[Math.floor(Math.random() * anonymousNames.length)];
+    const localColor = sessionStorage.getItem('cosphere_user_color') || colors[Math.floor(Math.random() * colors.length)];
 
     provider.awareness.setLocalStateField('user', {
       name: localName,
