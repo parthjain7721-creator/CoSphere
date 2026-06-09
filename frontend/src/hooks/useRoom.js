@@ -18,25 +18,39 @@ export function useRoom(roomId) {
     const provider = new WebsocketProvider(BACKEND_WS, roomId, doc);
     providerRef.current = provider;
 
-    // FIXED: Hydrate custom handles from local storage memory blocks or fallback dynamically
+    // Hydrate custom handles from session storage memory blocks or fallback dynamically
     const localName = sessionStorage.getItem('cosphere_user_name') || anonymousNames[Math.floor(Math.random() * anonymousNames.length)];
     const localColor = sessionStorage.getItem('cosphere_user_color') || colors[Math.floor(Math.random() * colors.length)];
 
+    // Initialize state structure containing baseline user data mapping rules
     provider.awareness.setLocalStateField('user', {
       name: localName,
       color: localColor,
       cursor: null
     });
+    
+    // Explicitly initialize typing state flag as false to keep schema unified
+    provider.awareness.setLocalStateField('typing', false);
 
     provider.on('status', (event) => {
       setConnected(event.status === 'connected');
     });
 
+    // Listens to global state shifts across clients, aggregating identifiers and typing flags
     provider.awareness.on('change', () => {
       const states = provider.awareness.getStates();
       const userList = [];
-      states.forEach((state) => {
-        if (state.user) userList.push(state.user);
+
+      states.forEach((state, clientID) => {
+        if (state.user) {
+          userList.push({
+            clientID: clientID,               // Essential layout key tracking parameter for lists
+            name: state.user.name,
+            color: state.user.color,
+            cursor: state.user.cursor,
+            isTyping: !!state.typing          // Safely catch the root level typing boolean flag
+          });
+        }
       });
       setUsers(userList);
     });

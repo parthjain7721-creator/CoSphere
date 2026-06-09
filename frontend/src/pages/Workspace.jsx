@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useRoom } from '../hooks/useRoom';
-import { Code, BookOpen, Play, Cpu, Users, Terminal, Share2, MessageSquare, Send, X } from 'lucide-react';
+import { Code, BookOpen, Play, Cpu, Users, Terminal, Share2, MessageSquare, Send, X, Bot } from 'lucide-react';
 import { EditorView } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { javascript } from '@codemirror/lang-javascript';
@@ -17,6 +17,13 @@ export default function Workspace() {
   const [language, setLanguage] = useState('javascript'); 
   const [terminalOutput, setTerminalOutput] = useState('');
   const [isRunning, setIsRunning] = useState(false);
+  
+  // Track client configuration locally to clear ESLint Ref-Render exceptions
+  const [localClientID, setLocalClientID] = useState(null);
+
+  // 🤖 AI Interactive Sidebar States
+  const [isAiOpen, setIsAiOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
   const [aiAnalysis, setAiAnalysis] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
 
@@ -33,6 +40,8 @@ export default function Workspace() {
   const cmViewRef = useRef(null);
   const cmNotesViewRef = useRef(null);
   const chatEndRef = useRef(null);
+  const aiEndRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
 
   const handleMouseMove = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -42,12 +51,38 @@ export default function Workspace() {
     e.currentTarget.style.setProperty('--y', `${y}%`);
   };
 
+  // Capture local ClientID safely as soon as the provider establishes connection parameters
+  useEffect(() => {
+    if (providerRef.current?.awareness) {
+      setLocalClientID(providerRef.current.awareness.clientID);
+    }
+  }, [connected, providerRef]);
+
   // Scroll down to the latest message whenever chat data list shifts
   useEffect(() => {
     if (isChatOpen) {
       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [chatMessages, isChatOpen]);
+
+  // Scroll down AI window when new analysis lands
+  useEffect(() => {
+    if (isAiOpen) {
+      aiEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [aiAnalysis, isAiOpen]);
+
+  // Clean layout instances and reset typing state markers on component dismount sequences
+  useEffect(() => {
+    const activeProvider = providerRef.current;
+    const activeTimeout = typingTimeoutRef.current;
+    return () => {
+      if (activeTimeout) clearTimeout(activeTimeout);
+      if (activeProvider?.awareness) {
+        activeProvider.awareness.setLocalStateField('typing', false);
+      }
+    };
+  }, [providerRef]);
 
   useEffect(() => {
     const ydoc = ydocRef.current;
@@ -56,6 +91,20 @@ export default function Workspace() {
     if (!ydoc || !provider) return;
 
     const localAwareness = provider.awareness;
+
+    // Broadcasts a typing activity state token safely via Yjs awareness matrix channels
+    const broadcastTypingActivity = () => {
+      const localState = localAwareness.getLocalState();
+      if (!localState?.typing) {
+        localAwareness.setLocalStateField('typing', true);
+      }
+
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+
+      typingTimeoutRef.current = setTimeout(() => {
+        localAwareness.setLocalStateField('typing', false);
+      }, 2000);
+    };
 
     // 📝 PANEL A: Code Canvas Real-time Mount Vector
     if (mode === 'code' && editorRef.current) {
@@ -70,6 +119,11 @@ export default function Workspace() {
         extensions: [
           javascript(),
           yCollab(ytext, localAwareness),
+          EditorView.updateListener.of((update) => {
+            if (update.docChanged) {
+              broadcastTypingActivity();
+            }
+          }),
           EditorView.theme({
             "&": { backgroundColor: "#1B262C", color: "#BBE1FA", height: "100%" },
             ".cm-content": { caretColor: "#BBE1FA", fontFamily: "JetBrains Mono, monospace" },
@@ -91,8 +145,6 @@ export default function Workspace() {
       }
 
       const yNotesText = ydoc.getText('codemirror-notes-shared');
-      
-      // Seed initial local display render state parsing mapping cleanly
       setMarkdownText(yNotesText.toString());
 
       const notesState = EditorState.create({
@@ -102,6 +154,7 @@ export default function Workspace() {
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
               setMarkdownText(update.state.doc.toString());
+              broadcastTypingActivity();
             }
           }),
           EditorView.theme({
@@ -125,7 +178,6 @@ export default function Workspace() {
           const textDecoder = new TextDecoder();
           const jsonString = textDecoder.decode(uint8Msg.subarray(1));
           const parsedPayload = JSON.parse(jsonString);
-          
           setChatMessages((prev) => [...prev, parsedPayload]);
         }
       } catch (err) {
@@ -169,6 +221,7 @@ export default function Workspace() {
     const textBuffer = textEncoder.encode(JSON.stringify(messageObject));
     const finalPayload = new Uint8Array(textBuffer.length + 1);
     finalPayload[0] = 2; 
+
     finalPayload.set(textBuffer, 1);
 
     providerRef.current.ws.send(finalPayload);
@@ -200,24 +253,55 @@ export default function Workspace() {
     }
   };
   
-  const triggerAiReview = async () => {
+  const triggerAiReview = async (e) => {
+    if (e) e.preventDefault();
+    
+    const rawCode = (mode === 'code') 
+      ? (cmViewRef.current?.state.doc.toString() || '')
+      : (cmNotesViewRef.current?.state.doc.toString() || '');
+      
+    const sourceCode = rawCode.trim();
+    const customPrompt = aiPrompt.trim();
+
+    if (!sourceCode) {
+      setAiAnalysis(`### Workspace Canvas Empty\n\n> Please insert code or text inside the **${mode === 'code' ? 'Code Canvas' : 'Shared Notes'}** workspace so Gemini has reference data to parse!`);
+      return;
+    }
+
+    if (!customPrompt) return;
+
     setIsAiLoading(true);
-    setAiAnalysis('Analyzing context blocks...');
+    setAiAnalysis((prev) => prev + `\n\n--- \n\n**🙋‍♂️ Question:** ${customPrompt}\n\n⏳ *Thinking...*`);
+    setAiPrompt('');
+    
     try {
-      const sourceCode = (mode === 'code') 
-        ? (cmViewRef.current?.state.doc.toString() || '')
-        : (cmNotesViewRef.current?.state.doc.toString() || '');
-        
       const response = await fetch('http://localhost:5000/api/ai/explain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: sourceCode, language: (mode === 'code' ? language : 'markdown') })
+        body: JSON.stringify({ 
+          code: sourceCode, 
+          language: (mode === 'code' ? language : 'markdown'),
+          prompt: customPrompt 
+        })
       });
+      
       const data = await response.json();
-      setAiAnalysis(data.candidates?.[0]?.content?.parts?.[0]?.text || 'No review returned.');
+      
+      let answer = '';
+      if (data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+        answer = data.candidates[0].content.parts[0].text;
+      } else if (data?.explanation) {
+        answer = data.explanation;
+      } else if (data?.error?.message) {
+        answer = `\`Backend API Exception:\` ${data.error.message}`;
+      } else {
+        answer = "AI parsing anomaly occurred. Ensure your `GEMINI_API_KEY` environment parameter is active.";
+      }
+      
+      setAiAnalysis((prev) => prev.replace('⏳ *Thinking...*', '') + `\n\n**🤖 Gemini Copilot:**\n${answer}`);
     } catch (e) {
       console.error('AI analysis failure context:', e);
-      setAiAnalysis('AI core parsing error.');
+      setAiAnalysis((prev) => prev.replace('⏳ *Thinking...*', '') + '\n\n❌ **AI processing error. Verify backend engines are running.**');
     } finally {
       setIsAiLoading(false);
     }
@@ -228,7 +312,7 @@ export default function Workspace() {
       {/* Header Panel */}
       <header className="h-14 border-b border-[#1E293B] bg-[#0F172A]/80 backdrop-blur-md flex items-center justify-between px-6 z-10 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-400 to-blue-500 flex items-center justify-center font-bold text-[#0F172A] text-lg">C</div>
+          <div className="w-8 h-8 rounded-lg bg-linear-to-br from-cyan-400 to-blue-500 flex items-center justify-center font-bold text-[#0F172A] text-lg">C</div>
           <span className="font-bold tracking-widest text-cyan-400 text-lg">CoSphere</span>
           <div className="flex items-center gap-2 ml-4 px-2 py-0.5 rounded bg-[#1E293B] text-xs text-gray-300 border border-cyan-500/20">
             <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`}></span>
@@ -263,9 +347,9 @@ export default function Workspace() {
         </div>
       </header>
 
-      {/* Main Structural Frame Operational Split Grid Layout */}
+      {/* Main Layout Area */}
       <div className="flex-1 flex overflow-hidden w-full relative">
-        {/* Left Aside Team Presence Node */}
+        {/* Left Side Menu */}
         <aside className="w-60 border-r border-[#1E293B] bg-[#0F172A]/40 backdrop-blur-sm p-4 flex flex-col justify-between shrink-0">
           <div>
             <div className="flex items-center gap-2 text-cyan-400 font-semibold uppercase tracking-wider text-xs mb-4">
@@ -273,27 +357,25 @@ export default function Workspace() {
             </div>
             <div className="space-y-2">
               {users.map((user, idx) => (
-                <div key={idx} className="flex items-center gap-3 p-2 rounded-xl bg-[#1E293B]/30 border border-[#1E293B]/50">
+                <div key={user.clientID || idx} className="flex items-center gap-3 p-2 rounded-xl bg-[#1E293B]/30 border border-[#1E293B]/50">
                   <div className="w-3 h-3 rounded-full shadow-md" style={{ backgroundColor: user.color }} />
-                  <span className="text-sm font-medium text-gray-200">{user.name}</span>
+                  <span className="text-sm font-medium text-gray-200 truncate">{user.name}</span>
                 </div>
               ))}
             </div>
           </div>
-          <button onClick={triggerAiReview} disabled={isAiLoading} className="w-full py-2.5 rounded-xl bg-gradient-to-r from-[#1E293B] to-cyan-600 border border-cyan-500/40 text-cyan-100 font-medium text-sm flex items-center justify-center gap-2 hover:brightness-110 transition-all">
-            <Cpu size={16} /> {isAiLoading ? 'Analyzing...' : 'Ask Gemini AI'}
+          <button onClick={() => setIsAiOpen(!isAiOpen)} className={`w-full py-2.5 rounded-xl border font-medium text-sm flex items-center justify-center gap-2 transition-all ${isAiOpen ? 'bg-cyan-500 text-[#0F172A] border-cyan-400' : 'bg-linear-to-r from-[#1E293B] to-cyan-600 border-cyan-500/40 text-cyan-100 hover:brightness-110'}`}>
+            <Cpu size={16} /> Ask Gemini AI
           </button>
         </aside>
 
-        {/* Central Component Panel Gateway Workspace */}
-        <main className="flex-1 flex flex-col bg-[#0F172A]/20 min-w-0 overflow-hidden">
+        {/* Workspace Central Components */}
+        <main className="flex-1 flex flex-col bg-[#0F172A]/20 min-w-0 overflow-hidden relative">
           <div className="flex-1 relative p-4 overflow-hidden">
             {mode === 'code' ? (
-              /* CODE CANVAS WORKSPACE VIEW */
-              <div className="w-full h-full flex flex-col">
-                <div ref={editorRef} className="flex-1 text-base rounded-2xl border border-[#1E293B]/60 p-2 bg-[#1B262C] overflow-hidden" />
+              <div className="w-full h-full flex flex-col relative">
+                <div ref={editorRef} className="flex-1 text-base rounded-2xl border border-[#1E293B]/60 p-2 bg-brand-bg overflow-hidden" />
                 
-                {/* Embedded Terminal Stream Console Drawer */}
                 <section className="h-56 mt-4 border border-[#1E293B] rounded-2xl bg-[#0F172A]/90 flex flex-col overflow-hidden shrink-0">
                   <div className="h-10 border-b border-[#1E293B] bg-[#0F172A] flex items-center justify-between px-4">
                     <div className="flex items-center gap-2 text-xs text-cyan-400 font-mono"><Terminal size={14} /> stdout // sandboxed-runtime-output</div>
@@ -303,42 +385,85 @@ export default function Workspace() {
                 </section>
               </div>
             ) : (
-              /* DUAL PANE COLLABORATIVE MARKDOWN PANEL INTERFACE LOGIC BLOCK */
-              <div className="w-full h-full flex gap-4 overflow-hidden">
-                {/* Left Split Pane: Raw Shared Input Editor */}
+              <div className="w-full h-full flex gap-4 overflow-hidden relative">
                 <div className="flex-1 flex flex-col min-w-0 h-full">
                   <div className="text-xs text-slate-400 font-mono mb-1 uppercase tracking-wider">&gt;_ markdown_source_editor</div>
                   <div ref={notesEditorRef} className="flex-1 rounded-2xl border border-[#1E293B]/80 bg-[#111827] overflow-hidden p-1 shadow-inner" />
                 </div>
-
-                {/* Right Split Pane: Computed Rendered Document Window View */}
                 <div className="flex-1 flex flex-col min-w-0 h-full">
                   <div className="text-xs text-cyan-400 font-mono mb-1 uppercase tracking-wider">&gt;_ real_time_compiled_view</div>
                   <div className="flex-1 rounded-2xl border border-[#1E293B]/60 bg-[#1E293B]/20 p-6 overflow-y-auto prose prose-invert prose-cyan max-w-none shadow-lg leading-relaxed">
-                    {markdownText.trim() ? (
-                      <ReactMarkdown>{markdownText}</ReactMarkdown>
-                    ) : (
-                      <div className="h-full flex items-center justify-center text-center font-mono text-xs text-slate-500 p-4">
-                        Waiting for markdown structure inputs. Start typing headers (#) to format your document blueprint...
-                      </div>
-                    )}
+                    {markdownText.trim() ? <ReactMarkdown>{markdownText}</ReactMarkdown> : <div className="h-full flex items-center justify-center text-center font-mono text-xs text-slate-500 p-4">Waiting for markdown structure inputs...</div>}
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* 📡 Option B: Aggregated Bottom Status Bar Overlay Panel */}
+            {users.filter(u => u.isTyping && u.clientID !== localClientID).length > 0 && (
+              <div className="absolute bottom-6 left-6 bg-[#0F172A]/90 border border-cyan-500/30 backdrop-blur-md px-3 py-1.5 rounded-xl shadow-2xl z-50 transition-all duration-300 ease-in-out animate-pulse">
+                <p className="text-xs text-slate-300 flex items-center space-x-2">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+                  </span>
+                  <span className="font-mono text-cyan-300">
+                    {users
+                      .filter(u => u.isTyping && u.clientID !== localClientID)
+                      .map(u => u.name)
+                      .join(', ')}
+                    {users.filter(u => u.isTyping && u.clientID !== localClientID).length === 1 ? ' is ' : ' are '} 
+                    typing...
+                  </span>
+                </p>
               </div>
             )}
           </div>
         </main>
 
-        {/* AI Drawer Diagnostics Overlay */}
-        {aiAnalysis && (
-          <aside className="w-80 border-l border-[#1E293B] bg-[#0F172A]/70 backdrop-blur-xl p-4 overflow-y-auto shrink-0">
-            <h3 className="text-sm font-bold text-cyan-400 uppercase tracking-wider mb-3">Gemini Diagnostics</h3>
-            <div className="prose prose-invert text-sm text-gray-300 leading-relaxed"><ReactMarkdown>{aiAnalysis}</ReactMarkdown></div>
-          </aside>
-        )}
+        {/* 🤖 Interactive Gemini Copilot Chat Sidebar Layout Panel */}
+        <div className={`h-full border-l border-[#1E293B] bg-[#0F172A]/95 backdrop-blur-xl shadow-2xl flex flex-col shrink-0 transition-all duration-300 ease-in-out ${isAiOpen ? 'w-95 opacity-100' : 'w-0 opacity-0 overflow-hidden pointer-events-none'}`}>
+          <div className="p-4 border-b border-[#1E293B] bg-[#1E293B]/20 flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-2 text-cyan-400 font-semibold text-sm">
+              <Bot size={16} /> Gemini Interactive Copilot
+            </div>
+            <button onClick={() => setIsAiOpen(false)} className="text-gray-400 hover:text-cyan-400 transition-colors p-1 rounded-lg hover:bg-[#1E293B]"><X size={16} /></button>
+          </div>
 
-        {/* 💬 Live Side Communication Panel */}
-        <div className={`h-full border-l border-[#1E293B] bg-[#0F172A]/95 backdrop-blur-xl shadow-2xl flex flex-col shrink-0 transition-all duration-300 ease-in-out ${isChatOpen ? 'w-[350px] opacity-100 visibility-visible' : 'w-0 opacity-0 overflow-hidden pointer-events-none'}`}>
+          {/* Dialog Log Box Area */}
+          <div className="flex-1 p-4 overflow-y-auto text-sm space-y-4 min-h-0 min-w-0 scrollbar-thin">
+            {!aiAnalysis ? (
+              <div className="text-xs font-mono text-slate-500 bg-slate-900/50 rounded-xl border border-[#1E293B] p-4">
+                &gt; AI core linked to active editor instance buffer. Type an operational query below (e.g., *'explain this code step by step'*) to submit context sequences.
+              </div>
+            ) : (
+              <div className="prose prose-invert prose-cyan max-w-none text-xs text-slate-200 leading-relaxed wrap-break-word bg-[#1E293B]/20 p-3 rounded-2xl border border-[#1E293B]/40">
+                <ReactMarkdown>{aiAnalysis}</ReactMarkdown>
+              </div>
+            )}
+            <div ref={aiEndRef} />
+          </div>
+
+          {/* 📥 Custom Question Prompt Dialog Submission Form Box */}
+          <form onSubmit={triggerAiReview} className="p-3 border-t border-[#1E293B] bg-[#0F172A]/60">
+            <div className="flex items-center gap-2 rounded-xl bg-[#1E293B]/40 border border-[#1E293B] px-3 py-2 focus-within:border-cyan-500/60 transition-colors">
+              <input 
+                type="text" 
+                value={aiPrompt} 
+                onChange={(e) => setAiPrompt(e.target.value)} 
+                placeholder={isAiLoading ? "Processing query..." : "Ask Gemini about your code..."}
+                disabled={isAiLoading}
+                className="w-full bg-transparent border-none text-xs text-gray-200 placeholder-slate-500 focus:outline-none disabled:cursor-not-allowed"
+              />
+              <button type="submit" disabled={isAiLoading || !aiPrompt.trim()} className="text-cyan-400 hover:text-cyan-300 disabled:text-gray-600 transition-colors p-1">
+                <Send size={14} />
+              </button>
+            </div>
+          </form>
+        </div>
+
+        {/* Live Side Team Chat Communication Panel */}
+        <div className={`h-full border-l border-[#1E293B] bg-[#0F172A]/95 backdrop-blur-xl shadow-2xl flex flex-col shrink-0 transition-all duration-300 ease-in-out ${isChatOpen ? 'w-87.5 opacity-100 visibility-visible' : 'w-0 opacity-0 overflow-hidden pointer-events-none'}`}>
           <div className="p-4 border-b border-[#1E293B] flex items-center justify-between bg-[#1E293B]/30 whitespace-nowrap">
             <div className="flex items-center gap-2 text-cyan-100 font-semibold text-sm">
               <MessageSquare size={16} className="text-cyan-400" /> Live Communication Channel
@@ -348,9 +473,7 @@ export default function Workspace() {
 
           <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
             {chatMessages.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center p-6 text-gray-500 font-mono text-xs whitespace-normal">
-                &gt; Communication stream offline. No active sequences dispatched yet.
-              </div>
+              <div className="h-full flex flex-col items-center justify-center text-center p-6 text-gray-500 font-mono text-xs whitespace-normal">&gt; Communication stream offline. No active sequences dispatched yet.</div>
             ) : (
               chatMessages.map((msg) => (
                 <div key={msg.id} className="flex flex-col bg-[#1E293B]/20 border border-brand-deep/40 p-2.5 rounded-xl max-w-[90%]">
@@ -358,7 +481,7 @@ export default function Workspace() {
                     <span className="text-xs font-bold text-cyan-400 truncate">{msg.sender}</span>
                     <span className="text-[10px] text-gray-500 font-mono">{msg.timestamp}</span>
                   </div>
-                  <p className="text-sm text-gray-200 break-words font-sans">{msg.text}</p>
+                  <p className="text-sm text-gray-200 wrap-break-word font-sans">{msg.text}</p>
                 </div>
               ))
             )}
@@ -367,13 +490,7 @@ export default function Workspace() {
 
           <form onSubmit={sendChatMessage} className="p-3 border-t border-[#1E293B] bg-[#0F172A]/60 whitespace-nowrap">
             <div className="flex items-center gap-2 rounded-xl bg-[#1E293B]/40 border border-brand-deep px-3 py-1.5 focus-within:border-cyan-500/60 transition-colors">
-              <input 
-                type="text" 
-                value={chatInput} 
-                onChange={(e) => setChatInput(e.target.value)} 
-                placeholder="Type messages..." 
-                className="flex-1 bg-transparent border-none text-sm text-gray-200 placeholder-gray-500 focus:outline-none"
-              />
+              <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Type messages..." className="flex-1 bg-transparent border-none text-sm text-gray-200 placeholder-gray-500 focus:outline-none" />
               <button type="submit" disabled={!chatInput.trim()} className="text-cyan-100 hover:text-cyan-400 disabled:text-gray-600 transition-colors p-1"><Send size={14} /></button>
             </div>
           </form>
